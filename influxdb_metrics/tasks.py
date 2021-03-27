@@ -1,6 +1,3 @@
-"""Celery tasks for the influxdb_metrics app."""
-from __future__ import absolute_import
-
 try:
     from celery import shared_task
 except ImportError:

@@ -1,38 +1,17 @@
-"""Middlewares for the influxdb_metrics app."""
-
-from django import VERSION as DJANGO_VERSION
-import inspect
-import time
 import logging
-try:
-    from urllib import parse
-except ImportError:
-    import urlparse as parse
+import time
 
 from django.conf import settings
 from django.core.exceptions import MiddlewareNotUsed
-try:
-    from django.utils.deprecation import MiddlewareMixin
-except ImportError:
-    class MiddlewareMixin(object):
-        pass
-
 from tld import get_tld
 from tld.exceptions import TldBadUrl, TldDomainNotFound, TldIOError
 
 from .loader import measurement_name_for, write_points
 
-if DJANGO_VERSION < (1, 10):
-    def is_user_authenticated(user):
-        return user.is_authenticated()
-else:
-    def is_user_authenticated(user):
-        return user.is_authenticated
-
 logger = logging.getLogger(__name__)
 
 
-class InfluxDBRequestMiddleware(MiddlewareMixin):
+class InfluxDBRequestMiddleware:
     """
     Measures request time and sends metric to InfluxDB.
 
@@ -43,89 +22,64 @@ class InfluxDBRequestMiddleware(MiddlewareMixin):
     def __init__(self, get_response=None):
         if getattr(settings, 'INFLUXDB_DISABLED', False):
             raise MiddlewareNotUsed
-        super().__init__(get_response=get_response)
 
-    def process_view(self, request, view_func, view_args, view_kwargs):
-        view = view_func
-        if not inspect.isfunction(view_func):
-            view = view.__class__
-        try:
-            request._view_module = view.__module__
-            request._view_name = view.__name__
-            request._start_time = time.time()
-        except AttributeError:  # pragma: no cover
-            pass
+        self.get_response = get_response
 
-    def process_response(self, request, response):
-        self._record_time(request)
+    def __call__(self, request):
+        request._start_time = time.perf_counter_ns()
+        response = self.get_response(request)
+        if hasattr(request, '_view_module'):
+            self._record_time(request)
         return response
 
-    def process_exception(self, request, exception):
-        self._record_time(request)
+    @staticmethod
+    def process_view(request, view_func, view_args, view_kwargs):
+        request._view_module = view_func.__module__
+        request._view_name = getattr(view_func, '__name__', view_func.__class__.__name__)
 
-    def _record_time(self, request):
-        if hasattr(request, '_start_time'):
-            ms = int((time.time() - request._start_time) * 1000)
-            if request.is_ajax():
-                is_ajax = True
-            else:
-                is_ajax = False
+    @staticmethod
+    def _record_time(request):
+        ms = (time.perf_counter_ns() - request._start_time) // 1_000_000
 
-            is_authenticated = False
-            is_staff = False
-            is_superuser = False
-            if is_user_authenticated(request.user):
-                is_authenticated = True
-                if request.user.is_staff:
-                    is_staff = True
-                if request.user.is_superuser:
-                    is_superuser = True
-
-            referer = request.META.get('HTTP_REFERER')
-            referer_tld = None
-            referer_tld_string = ''
-            if referer:
-                try:
-                    referer_tld = get_tld(referer, as_object=True)
-                except (TldBadUrl, TldDomainNotFound, TldIOError):
-                    pass
-            if referer_tld:
-                referer_tld_string = referer_tld.tld
-
-            url = request.get_full_path()
-            url_query = parse.parse_qs(parse.urlparse(url).query)
-
-            # This allows you to measure click rates for ad-campaigns, just
-            # make sure that your ads have `?campaign=something` in the URL
-            campaign_keyword = getattr(
-                settings, 'INFLUXDB_METRICS_CAMPAIGN_KEYWORD', 'campaign')
-            campaign = ''
-            if campaign_keyword in url_query:
-                campaign = url_query[campaign_keyword][0]
-
-            data = [{
-                'measurement': measurement_name_for('request'),
-                'tags': {
-                    'host': settings.INFLUXDB_TAGS_HOST,
-                    'is_ajax': is_ajax,
-                    'is_authenticated': is_authenticated,
-                    'is_staff': is_staff,
-                    'is_superuser': is_superuser,
-                    'method': request.method,
-                    'module': request._view_module,
-                    'view': request._view_name,
-                    'referer': referer,
-                    'referer_tld': referer_tld_string,
-                    'full_path': url,
-                    'path': request.path,
-                    'campaign': campaign,
-                },
-                'fields': {'value': ms, },
-            }]
+        referer = request.META.get('HTTP_REFERER')
+        referer_tld = None
+        if referer:
             try:
-                write_points(data)
-            except Exception as err:
-                logger.exception(err, extra={"request": request})
-                # sadly, when using celery, there can be issues with the connection to the MQ. Better to drop the data
-                # than fail the request.
+                referer_tld = get_tld(referer, as_object=True)
+            except (TldBadUrl, TldDomainNotFound, TldIOError):
                 pass
+
+        # This allows you to measure click rates for ad-campaigns, just
+        # make sure that your ads have `?campaign=something` in the URL
+        campaign_keyword = getattr(
+            settings, 'INFLUXDB_METRICS_CAMPAIGN_KEYWORD', 'campaign',
+        )
+        campaign = request.GET.getlist(campaign_keyword, [''])[0]
+
+        data = [{
+            'measurement': measurement_name_for('request'),
+            'tags': {
+                'host': settings.INFLUXDB_TAGS_HOST,
+                'is_ajax': request.is_ajax(),
+                'is_authenticated': request.user.is_authenticated,
+                'is_staff': request.user.is_staff,
+                'is_superuser': request.user.is_superuser,
+                'method': request.method,
+                'module': request._view_module,
+                'view': request._view_name,
+                'referer': referer,
+                'referer_tld': referer_tld.tld if referer_tld else '',
+                'full_path': request.get_full_path_info(),
+                'path': request.path_info,
+                'campaign': campaign,
+                'scheme': request.scheme,
+                'content_type': request.headers.get('content-type'),
+            },
+            'fields': {'value': ms},
+        }]
+        try:
+            write_points(data)
+        except Exception as err:
+            logger.exception(err, extra={"request": request})
+            # sadly, when using celery, there can be issues with the connection to the MQ. Better to drop the data
+            # than fail the request.

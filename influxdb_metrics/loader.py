@@ -3,14 +3,9 @@ from functools import lru_cache
 
 from django.conf import settings
 
-try:
-    from .tasks import write_points as write_points_celery
-except ImportError:
-    write_points_celery = None
-
+from .tasks import write_points as write_points_celery
 from .utils import write_points as write_points_normal
 
-write_points = None
 if getattr(settings, 'INFLUXDB_USE_CELERY', False):
     write_points = write_points_celery.delay
 else:

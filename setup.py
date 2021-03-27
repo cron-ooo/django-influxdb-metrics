@@ -1,4 +1,3 @@
-# -*- encoding: utf-8 -*-
 """
 Python setup file for the influxdb_metrics app.
 
@@ -24,26 +23,21 @@ For new releases, you need to bump the version number in
 influxdb_metrics/__init__.py and re-run the above command.
 
 For more information on creating source distributions, see
-http://docs.python.org/2/distutils/sourcedist.html
+https://docs.python.org/3/distutils/sourcedist.html
 
 """
 import os
-from setuptools import setup, find_packages
-import influxdb_metrics as app
 
-install_requires = [
-    'django>=1.6',
-    'influxdb>=2.9.1',
-    'tld',
-    'python-server-metrics>=0.1.9',
-]
+from setuptools import find_packages, setup
+
+import influxdb_metrics as app
 
 
 def read(fname):
     try:
         return open(os.path.join(os.path.dirname(__file__), fname)).read()
     except IOError:
-        return ''
+        return ""
 
 
 setup(
@@ -51,15 +45,36 @@ setup(
     version=app.__version__,
     description=("A reusable Django app that sends metrics "
                  "about your project to InfluxDB"),
-    long_description_content_type='text/markdown',
-    long_description=read('README.md'),
-    license='The MIT License',
-    platforms=['OS Independent'],
-    keywords='django, app, reusable, metrics, influxdb',
-    author='Martin Brochhaus',
-    author_email='mbrochh@gmail.com',
+    long_description_content_type="text/markdown",
+    long_description=read("README.md"),
+    license="The MIT License",
+    platforms=["OS Independent"],
+    keywords="django, app, reusable, metrics, influxdb",
+    author="Martin Brochhaus",
+    author_email="mbrochh@gmail.com",
     url="https://github.com/bitmazk/django-influxdb-metrics",
     packages=find_packages(),
     include_package_data=True,
-    install_requires=install_requires,
+    install_requires=[
+        "django>=2.2",
+        "influxdb>=2.9.1",
+        "tld",
+    ],
+    extras_require={
+        "celery": ["celery>=4"],
+        "postgresql": ["python-server-metrics>=0.1.9"],
+    },
+    classifiers=[
+        "Framework :: Django",
+        "Framework :: Django :: 2.2",
+        "Framework :: Django :: 3.0",
+        "Framework :: Django :: 3.1",
+        "Programming Language :: Python",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.5",
+        "Programming Language :: Python :: 3.6",
+        "Programming Language :: Python :: 3.7",
+        "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
+    ],
 )
